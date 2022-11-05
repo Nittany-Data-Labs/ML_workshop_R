@@ -1,0 +1,568 @@
+---
+title: "NDL WORKSHOP"
+output: html_notebook
+---
+
+
+```{r,include=FALSE}
+rm(list = ls())
+library(data.table)
+library(ggplot2)
+library(cluster)
+library(factoextra)
+library(gridExtra)
+library(glmnet)
+library(plotmo)
+library(caret)
+library(tidyverse)
+library(xgboost)
+```
+
+
+```{r}
+iris #iris dataset
+help(iris)
+```
+
+
+```{r}
+iris2 <- iris %>%
+  select(-Species) %>% #delete the Species column
+  scale() #scaling; if dataset has different units and different ranges we need to perform scale
+
+species <- iris$Species
+
+iris2
+```
+
+
+Now let's visualize the data
+```{r}
+pairs(iris2, col = species) #col=color; black, red, green(assigned by alphabetical order)
+cor(iris2)
+```
+
+## Agglomerative Hierarchical Clustering
+```{r}
+eu_dist <- get_dist(iris2, method = 'euclidean') #generate dissimlarity matrix
+
+hc_single   <- hclust(eu_dist, method='single') # for single linkage; distance between two clusters are the minimum distance between any pairs
+
+hc_complete <- hclust(eu_dist, method='complete') # for complete linkage; distance between two clusters are the maximum distance between any pairs
+
+hc_average  <- hclust(eu_dist, method='average') # for average linkage
+
+hc_centroid <- hclust(eu_dist, method='centroid') # for centroid linkage; distance between two centroids of the clusters
+
+str(hc_single) # it's a list
+```
+
+The better way to understand the result is to visualize it using a *dendrogram*.
+```{r}
+plot(hc_single)  #not very centered
+plot(hc_complete) #mostly centered
+plot(hc_average) #distance between two clusteres is defined this way: between average distance between all possible couple of points
+plot(hc_centroid)
+```
+# Cutting the dendrogram
+
+# K=2 (2 clusters)
+#visually 
+```{r}
+fviz_dend(hc_complete, k = 2, k_colors = "jco", as.ggplot = TRUE, show_labels = FALSE, main='Euclidean-Complete')
+#k=2 helps identify two clusters; k specifies the numbers of clusters you want 
+```
+#numerically
+```{r}
+cluster_h <- cutree(hc_complete, k = 2) #identifying 2 groups
+# 1 and 2 mean which group they belong to...
+cluster_h
+```
+
+
+# Agglomerative Hierarchical Clustering vs. Original species grouping 
+```{r}
+pairs(iris2, col = cluster_h) # our result, color here comes from the cluster we just made
+pairs(iris2, col = species) # original species grouping
+```
+# Try k=3 groups (h=5 means cutting the dendrogram at height 5, which gives us 3 groups)
+```{r}
+fviz_dend(hc_complete, h = 5, k_colors = "jco", as.ggplot = TRUE, show_labels = FALSE, main='Euclidean-Complete')
+cluster_h <- cutree(hc_complete, h = 5) #identifying 3 groups by cutting at height h=3.8
+cluster_h
+```
+
+```{r}
+pairs(iris2, col = cluster_h, main = "Our result") # our result
+pairs(iris2, col = species, main = "Species") # original species grouping
+```
+
+## Divisive H-clust
+### EDA
+```{r}
+dat <- iris
+species <- iris$Species
+
+ggplot(dat) +
+  aes(x = Petal.Width, y = Sepal.Length, colour = Species) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()
+```
+
+
+
+### Hierarchical Clustering Utilizing Euclidean
+```{r}
+#- Our goal is to do hierarchical clustering so as a first step, we should
+#- compute some pairwise distances
+#- compare the entire data 
+dist_matrix <- dist(dat[, 1:4])
+H_dendo <- hclust(dist_matrix)
+plot(H_dendo)
+#- further we can cut the tree at the desired number of clusters.
+#- note that this cut is done AFTER the algorithm has been performed
+k <- 3
+#- The following will return indices 1:k
+#cutree(H_dendo,k)
+#- We can look at how these classes are distributed over the true labels since 
+#- actually have the true labels
+table(cutree(H_dendo,k),dat[,5])
+clusE <- as.factor(cutree(H_dendo,k))
+dat$clusE <- as.factor(cutree(H_dendo,k))
+```
+
+
+### Hierarchical Clustering Utilizing Manhattan
+```{r}
+#using Manhattan distances instead
+dist_matrix2 <- dist(dat[, 1:4], method = "manhattan")
+H_dendo2 <- hclust(dist_matrix2)
+plot(H_dendo2)
+#- further we can cut the tree at the desired number of clusters.
+#- note that this cut is done AFTER the algorithm has been performed
+k <- 3
+#- The following will return indices 1:k
+#cutree(H_dendo2,k)
+#- We can look at how these classes are distributed over the true labels since 
+#- actually have the true labels
+table(cutree(H_dendo2,k),dat[,5])
+clusM <- as.factor(cutree(H_dendo2,k))
+dat$clusM <- as.factor(cutree(H_dendo2,k))
+```
+
+
+### Plot Comparison
+```{r}
+a<-ggplot(dat) +
+  aes(x = Petal.Width, y = Sepal.Length, colour = clusE) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()
+b<-ggplot(dat) +
+  aes(x = Petal.Width, y = Sepal.Length, colour = clusM) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()
+c<-ggplot(dat) +
+  aes(x = Petal.Width, y = Sepal.Length, colour = Species) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()
+
+grid.arrange(a,b,c, ncol=3)
+```
+
+
+
+
+
+
+#Create a complete model
+```{r}
+library(carData)
+glimpse(Salaries)
+lm_total <- lm(salary~., data = Salaries)
+summary(lm_total)
+```
+
+
+
+
+#forward selection
+```{r}
+head(Salaries)
+library(leaps)
+regfit.fwd = regsubsets(salary ~ .,
+               data = Salaries,
+               nbest = 1,       # 1 best model for each number of predictors
+               nvmax = NULL,    # NULL for no limit on number of variables
+               force.in = NULL, force.out = NULL,
+               method = "forward")
+regfit.fwd.summa=summary(regfit.fwd)
+
+regfit.fwd.summa
+```
+
+```{r}
+par(mfrow=c(2,2))
+#rss plot -  NOT USEFUL
+plot(regfit.fwd.summa$rss ,xlab="Number of Variables ",ylab="RSS",type="l")
+
+#adjr2 plot
+plot(regfit.fwd.summa$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+max_adjr2 <- which.max(regfit.fwd.summa$adjr2)
+points(max_adjr2,regfit.fwd.summa$adjr2[max_adjr2], col="red",cex=2,pch=20)
+
+# AIC criterion (Cp) to minimize
+plot(regfit.fwd.summa$cp ,xlab="Number of Variables ",ylab="Cp", type='l')
+min_cp <- which.min(regfit.fwd.summa$cp )
+points(min_cp, regfit.fwd.summa$cp[min_cp],col="red",cex=2,pch=20)
+
+# BIC criterion to minimize
+plot(regfit.fwd.summa$bic ,xlab="Number of Variables ",ylab="BIC",type='l')
+min_bic <- which.min(regfit.fwd.summa$bic)
+points(min_bic,regfit.fwd.summa$bic[min_bic],col="red",cex=2,pch=20)
+```
+
+
+
+
+#backward selection result
+```{r}
+regfit.bwd = regsubsets(salary ~ .,
+               data = Salaries,
+               nbest = 1,       # 1 best model for each number of predictors
+               nvmax = NULL,    # NULL for no limit on number of variables
+               force.in = NULL, force.out = NULL,
+               method = "backward")
+regfit.bwd.summa=summary(regfit.bwd)
+
+regfit.bwd.summa
+```
+
+```{r}
+par(mfrow=c(2,2))
+#rss plot -  NOT USEFUL
+plot(regfit.bwd.summa$rss ,xlab="Number of Variables ",ylab="RSS",type="l")
+
+#adjr2 plot
+plot(regfit.bwd.summa$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+max_adjr2 <- which.max(regfit.bwd.summa$adjr2)
+points(max_adjr2,regfit.bwd.summa$adjr2[max_adjr2], col="red",cex=2,pch=20)
+
+# AIC criterion (Cp) to minimize
+plot(regfit.bwd.summa$cp ,xlab="Number of Variables ",ylab="Cp", type='l')
+min_cp <- which.min(regfit.bwd.summa$cp )
+points(min_cp, regfit.bwd.summa$cp[min_cp],col="red",cex=2,pch=20)
+
+# BIC criterion to minimize
+plot(regfit.bwd.summa$bic ,xlab="Number of Variables ",ylab="BIC",type='l')
+min_bic <- which.min(regfit.bwd.summa$bic)
+points(min_bic,regfit.bwd.summa$bic[min_bic],col="red",cex=2,pch=20)
+```
+```{r}
+library(caret)
+
+ set.seed(123)
+ train <- createDataPartition(Salaries$salary, p = 0.8, list = FALSE)
+ # generating training and validation dataset from the train_obs
+ training_df <- Salaries[train, ] 
+ validation_df  <- Salaries[-train, ]
+```
+
+
+```{r}
+regfit_best <- regsubsets(salary ~ ., data = training_df,  nvmax = 13, method="exhaustive")
+
+summary <-summary(regfit_best)
+summary
+```
+
+
+```{r}
+val_mat = model.matrix(salary ~ ., data =validation_df)
+```
+
+```{r}
+mse <- rep(NA,6)
+ for(i in 1:6){
+   coefi <- coef(regfit_best,id=i)
+   pred <- val_mat[,names(coefi)]%*%coefi
+   mse[i] <- mean( (validation_df$salary- pred)^2 )
+ }
+
+ plot(mse, type='o')
+ points(which.min(mse), mse[which.min(mse)], col='red')
+```
+
+
+# LASSO
+
+```{r}
+rm(list=ls())
+
+## Cross Validation 
+sal <- carData::Salaries
+
+dat<-sal
+sub_dat <- sal
+
+rand_idx <- sample(1:nrow(dat),79)
+test <- sub_dat[rand_idx,]
+train <- sub_dat[-rand_idx,]
+
+trainy <- train$salary
+
+dummies <- dummyVars(salary~., data = train)
+dummies
+
+#putting new dummies into tables
+train <- predict(dummies, newdata = train)
+train <- data.table(train)
+
+test <- predict(dummies, newdata = test)
+test <- data.table(test)
+
+#find lambda using CV, alpha 1 for LASSO
+train <- as.matrix(train)
+test <- as.matrix(test)
+
+gl_model <- cv.glmnet(train, trainy, alpha = 1, nfolds = 100 ,family="gaussian")
+bestlam <- gl_model$lambda.min
+
+#lambdaplot
+gl_model <- glmnet(train, trainy, alpha = 1, family="gaussian")
+plot_glmnet(gl_model, s = log(bestlam))
+summary(gl_model)
+
+pred <- predict(gl_model, s = bestlam, newx = test)
+predsal <- as.data.table(pred)
+
+
+```
+
+
+
+## XG-Boost Regression Trees
+```{r}
+rm(list=ls())
+#cross validation
+sal <- carData::Salaries
+
+dat<-sal
+sub_dat <- sal
+
+rand_idx <- sample(1:nrow(dat),79)
+test <- sub_dat[rand_idx,]
+train <- sub_dat[-rand_idx,]
+
+y.train <- train$salary
+y.test <- test$salary
+
+dummies <- dummyVars(salary~ ., data = train)
+x.train <- predict(dummies, newdata = train) 
+x.test <- predict(dummies, newdata = test)
+
+dtrain <- xgb.DMatrix(x.train,label=y.train,missing=NA)
+dtest <- xgb.DMatrix(x.test,missing=NA)
+
+
+hyper_perm_tune <- NULL
+
+param <- list(                    objective = "reg:squarederror",
+                                  gamma               = .3,   
+                                  booster             = "gbtree",
+                                  eval_metric         = "rmse",
+                                  eta                 = .25, 
+                                  max_depth           = 4, 
+                                  subsample           = 1.0, 
+                                  colsample_bytree    = 1.0,
+                                  tree_method = 'hist'  )
+
+# find the best number of trees
+XGBfit <- xgb.cv(params = param,
+                 nfold = 5,
+                 nrounds = 10000,
+                 missing = NA,
+                 data = dtrain,
+                 print_every_n = 1,
+                 early_stopping_rounds = 25)
+
+#manually build a table to see how well, change par to see if they do better 
+best_tree_n <- unclass(XGBfit)$best_iteration #extract best B
+new_row <- data.table(t(param)) # making a data table form parameters
+new_row$best_tree_n <- best_tree_n
+
+test_error <- unclass(XGBfit)$evaluation_log[best_tree_n,]$test_rmse_mean
+new_row$test_error <- test_error
+hyper_perm_tune <- rbind(new_row, hyper_perm_tune)
+
+# fit the model to all of the data 
+
+watchlist <- list( train = dtrain)
+
+#train the model, extract best parameters 
+a <- as.data.table(hyper_perm_tune)
+a <- a[a$test_error == min(a$test_error)]
+
+param <- list(  objective           = "reg:squarederror",
+                gamma               = a$gamma,   
+                booster             = "gbtree",
+                eval_metric         = "rmse",
+                eta                 = a$eta, 
+                max_depth           = a$max_depth, 
+                subsample           = a$subsample, 
+                colsample_bytree    = a$colsample_bytree,
+                tree_method = 'hist'  )
+
+
+XGBfit <- xgb.train( params = param,
+                     nrounds = best_tree_n,
+                     missing = NA,
+                     data = dtrain,
+                     watchlist = watchlist,
+                     print_every_n = 1)
+
+#predict into test data
+test$predsalary <- predict(XGBfit, newdata = dtest)
+
+test
+
+xgb.plot.tree(model =XGBfit )
+```
+
+## Classification
+## Logistic Regression
+```{r}
+df <- as.data.frame(Titanic)
+df.expanded <- df[rep(seq(nrow(df)), df$Freq), 1:4]
+
+dat<-df.expanded
+sub_dat <- df.expanded
+
+rand_idx <- sample(1:nrow(dat),440)
+test <- sub_dat[rand_idx,]
+train <- sub_dat[-rand_idx,]
+
+train$survcode <- ifelse(train$Survived =="Yes",1,0)
+test$survcode <- ifelse(test$Survived =="Yes",1,0)
+train$Survived<-NULL
+test$Survived<-NULL
+
+
+survive <- glm(survcode~., data=train,family="binomial")
+
+prediction <- predict(survive, newdata=test, type="response")
+
+test$pred <- prediction
+
+test
+```
+
+## XG Boost Classification
+```{r}
+rm(list=ls())
+#cross validation
+df <- as.data.frame(Titanic)
+df.expanded <- df[rep(seq(nrow(df)), df$Freq), 1:4]
+
+dat<-df.expanded
+sub_dat <- df.expanded
+
+rand_idx <- sample(1:nrow(dat),440)
+test <- sub_dat[rand_idx,]
+train <- sub_dat[-rand_idx,]
+
+train$survcode <- ifelse(train$Survived =="Yes",1,0)
+test$survcode <- ifelse(test$Survived =="Yes",1,0)
+train$Survived<-NULL
+test$Survived<-NULL
+
+#prep data for XGBOOST
+
+y.train <- train$survcode
+y.test <- test$survcod
+
+dummies <- dummyVars(survcode~ ., data = train)
+x.train <- predict(dummies, newdata = train) 
+x.test <- predict(dummies, newdata = test)
+
+dtrain <- xgb.DMatrix(x.train,label=y.train,missing=NA)
+dtest <- xgb.DMatrix(x.test,missing=NA)
+
+
+hyper_perm_tune <- NULL
+
+param <- list(                 objective = "multi:softprob",
+                               num_class           = 2,
+                               gamma               = .3,   
+                               booster             = "gbtree",
+                               eval_metric         = "mlogloss",
+                               eta                 = .25, 
+                               max_depth           = 4, 
+                               subsample           = 1.0, 
+                               colsample_bytree    = 1.0,
+                               tree_method = 'hist'   )
+
+XGBfit <- xgb.cv(params = param,
+                 nfold = 5,
+                 nrounds = 10000,
+                 missing = NA,
+                 data = dtrain,
+                 print_every_n = 1,
+                 early_stopping_rounds = 25)
+
+
+#manually build a table to see how well, change par to see if they do better 
+best_tree_n <- unclass(XGBfit)$best_iteration #extract best B
+new_row <- data.table(t(param)) # making a data table form parameters
+new_row$best_tree_n <- best_tree_n
+
+test_error <- unclass(XGBfit)$evaluation_log[best_tree_n,]$test_mlogloss_mean
+new_row$test_error <- test_error
+hyper_perm_tune <- rbind(new_row, hyper_perm_tune)
+
+# fit the model to all of the data 
+
+watchlist <- list( train = dtrain)
+
+#train the model, extract best parameters 
+a <- as.data.table(hyper_perm_tune)
+a <- a[a$test_error == min(a$test_error)]
+
+param <- list(  objective = "multi:softprob",
+                num_class           = 2,
+                gamma               = a$gamma,   
+                booster             = "gbtree",
+                eval_metric         = "mlogloss",
+                eta                 = a$eta, 
+                max_depth           = a$max_depth, 
+                subsample           = a$subsample, 
+                colsample_bytree    = a$colsample_bytree,
+                tree_method = 'hist'  )
+
+
+XGBfit <- xgb.train( params = param,
+                     nrounds = best_tree_n,
+                     missing = NA,
+                     data = dtrain,
+                     watchlist = watchlist,
+                     print_every_n = 1)
+
+testpred <- predict(XGBfit, newdata = dtest, reshape = T)
+
+testpred <- as.data.table(testpred)
+colnames(testpred) <- c("notsurvived","survive")  
+
+test$id <- 1:440
+testpred$id <- 1:440
+
+testwpred<- cbind(test,testpred, by = "id")
+testwpred
+xgb.plot.tree(model =XGBfit )
+```
+
+
+
+
